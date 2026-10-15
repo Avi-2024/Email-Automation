@@ -28,12 +28,15 @@ export function normalizeCampaign(input, now = new Date()) {
     throw new Error('Schedule at least 1 minute in the future');
   }
   // Marketing messages must always have an unsubscribe link.
+  const previewText = String(input.previewText ?? '').trim();
+  if (previewText.length > 160) throw new Error('Preview text must be at most 160 characters');
   const footer = `<hr><p style="font-size:12px;color:#555">You are receiving this because you subscribed to our updates. <a href="{{ unsubscribe }}">Unsubscribe</a></p>`;
   const bodyClose = html.search(/<\/body\s*>/i);
-  const withFooter = bodyClose >= 0
+  const hasUnsubscribe = /{{\s*unsubscribe\s*}}/i.test(html);
+  const withFooter = hasUnsubscribe ? html : bodyClose >= 0
     ? html.slice(0, bodyClose) + footer + html.slice(bodyClose)
     : html + footer;
-  return { name, subject, html: withFooter, scheduledAt: new Date(ms).toISOString(), dayIst: istDay(ms) };
+  return { name, subject, html: withFooter, scheduledAt: new Date(ms).toISOString(), dayIst: istDay(ms), previewText };
 }
 
 export function safeStatus(status) {
