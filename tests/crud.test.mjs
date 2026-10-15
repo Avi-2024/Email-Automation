@@ -1,74 +1,137 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../src/index.js';
+import {normalizeCampaign} from '../src/helpers.js';
 
-const base={ADMIN_TOKEN:'test-token',DRY_RUN:'true',BREVO_API_KEY:'test-api',BREVO_LIST_ID:'24'};
-const origin='https://example.workers.dev';
-const call=(path,method='GET',body,env=base)=>worker.fetch(new Request(origin+path,{
-  method,headers:{Authorization:'Bearer test-token'},
+const origin = 'https://example.workers.dev';
+const headers = {'Authorization':'Bearer test-admin-secret'};
+const base = {ADMIN_TOKEN:'test-admin-secret',DRY_RUN:'true',BREVO_API_KEY:'test-key',BREVO_LIST_ID:'24'};
+const call = (path,method='GET',body,env=base) => worker.fetch(new Request(`${origin}${path}`, {
+  method, headers:{...headers,...(body?{'Content-Type':'application/json'}:{})},
   ...(body?{body:JSON.stringify(body)}:{})
 }),env);
-const url='/admin/contacts/pat%2Btag%40example.com';
-test('Contact edit changes names only, not list or suppression',async()=>{
-  const old=globalThis.fetch;
+const withMockFetch=async(mock,callback)=>{
+  const previous=globalThis.fetch;
+  globalThis.fetch=mock;
+  try{return await callback();}finally{globalThis.fetch=previous;}
+};
+const item = '/admin/contacts/pat%2Btag%40example.com';
+const email = 'pat+tag@example.com';
+
+test('edit contact updates ONLY names and respects list membership',async()=>{
   const calls=[];
-  globalThis.fetch=async (u,o)=>{
-    calls.push({url:String(u),method:o.method,body:o.body});
-    return o.method==='GET'?Response.json({email:'pat+tag@example.com',listIds:[24,90]}):new Response(null,{status:204});
-  };
-  try {
-    const r=await call(url,'PUT',{firstName:'Pat',lastName:'Customer'});
-    assert.equal(r.status,200);
-    assert.deepEqual(JSON.parse(calls[1].body),{attributes:{FNAME:'Pat',LNAME:'Customer'}});
-    assert.equal(calls.length,2);
-  }finally{globalThis.fetch=old;}
+  await withMockFetch(async(url,options)=>{
+    calls.push({url:String(url),options});
+    if(options.method==='GET')return Response.json({email,listIds:[24,99]});
+    return new Response(null,{status:204});
+  },async()=>{
+    const r=await call(item,'PUT',{firstName:' Pat ',lastName:' Customer '});
+    assert.equal(r.status,200);assert.deepEqual(await r.json(),{ok:true,email,firstName:'Pat',lastName:'Customer'});
+  });
+  assert.equal(calls.length,2);
+  assert.equal(calls[1].options.method,'PUT');
+  assert.equal(calls[1].url,`https://api.brevo.com/v3/contacts/${encodeURIComponent(email)}`);
+  assert.deepEqual(JSON.parse(calls[1].options.body),{attributes:{FNAME:'Pat',LNAME:'Customer'}});
 });
-test('Contact delete removes list membership only',async()=>{
-  const old=globalThis.fetch;const calls=[];
-  globalThis.fetch=async (u,o)=>{
-    calls.push({url:String(u),method:o.method,body:o.body});
-    return o.method==='GET'?Response.json({listIds:[24]}):Response.json({success:['pat+tag@example.com'],failure:[]});
-  };
-  try {
-    const r=await call(url,'DELETE');
-    assert.equal(r.status,200);assert.equal((await r.json()).removedFromList,24);
-    assert.match(calls[1].url,/\/contacts\/lists\/24\/contacts\/remove$/);
-    assert.deepEqual(JSON.parse(calls[1].body),{emails:['pat+tag@example.com']});
-  }finally{globalThis.fetch=old;}
+
+test('delete contact only removes from configured list, not Brevo account',async()=>{
+  const calls=[];
+  await withMockFetch(async(url,options)=>{
+    calls.push({url:String(url),options});
+    if(options.method==='GET')return Response.json({email,listIds:[24,99]});
+    return Response.json({success:[email],failure:[]},{status:201});
+  },async()=>{
+    const r=await call(item,'DELETE');assert.equal(r.status,200);
+    assert.equal((await r.json()).removedFromList,24);
+  });
+  assert.equal(calls.length,2);
+  assert.equal(calls[1].options.method,'POST');
+  assert.match(calls[1].url,/\/contacts\/lists\/24\/contacts\/remove$/);
+  assert.deepEqual(JSON.parse(calls[1].options.body),{emails:[email]});
 });
-test('Cross-list mutations are forbidden and require admin authentication',async()=>{
-  const old=globalThis.fetch;let count=0;
-  globalThis.fetch=async()=>{count++;return Response.json({listIds:[99]});};
-  try{
-    for(const method of ['PUT','DELETE']){
-      const r=await call(url,method,method==='PUT'?{firstName:'Pat',lastName:''}:undefined);
+
+test('contact in another Brevo list cannot be edited or removed',async()=>{
+  let calls=0;
+  await withMockFetch(async()=>{calls++;return Response.json({email,listIds:[11,99]});},async()=>{
+    for(const method of ['PUT','DELETE']) {
+      const r=await call(item,method,method==='PUT'?{firstName:'Pat',lastName:''}:undefined);
       assert.equal(r.status,404);assert.equal((await r.json()).code,'CONTACT_NOT_IN_LIST');
     }
-    const r=await worker.fetch(new Request(origin+url,{method:'DELETE'}),base);
-    assert.equal(r.status,401);assert.equal(count,2);
-  }finally{globalThis.fetch=old;}
+  });
+  assert.equal(calls,2);
 });
-test('Campaign editing and deletion are guarded by queued status and future schedule',async()=>{
-  const id='12345678-1234-4234-9234-123456789abc';
-  const sql=[];
-  const env={...base,DB:{prepare(s){sql.push(s);return{bind(...p){return{
-    async first(){return {id,status:'queued',scheduled_at:new Date(Date.now()+600000).toISOString(),html:'<body>Hello</body>'};},
-    async run(){return{meta:{changes:1}};}
-  };}};}}};
-  const future=new Date(Date.now()+600000).toISOString();
-  const body={name:'Edited',subject:'Subject',html:'<html><body>Personal update</body></html>',scheduledAt:future};
-  assert.equal((await call('/admin/campaigns/'+id,'GET',undefined,env)).status,200);
-  assert.equal((await call('/admin/campaigns/'+id,'PUT',body,env)).status,200);
-  assert.equal((await call('/admin/campaigns/'+id,'DELETE',undefined,env)).status,200);
-  assert.ok(sql.some(s=>s.includes("status='queued'")&&s.startsWith('UPDATE campaigns')));
-  assert.ok(sql.some(s=>s.includes("status='queued'")&&s.startsWith('DELETE FROM campaigns')));
+
+test('contact mutations validate input and reject unauthenticated users',async()=>{
+  for(const [path,method,body] of [[item,'PUT',{firstName:'X'.repeat(101),lastName:''}],
+     [item,'PUT',{firstName:'Pat'}],['/admin/contacts/not-an-email','DELETE']]){
+    const r=await call(path,method,body);assert.equal(r.status,400);
+  }
+  const noAuth=await worker.fetch(new Request(origin+item,{method:'DELETE'}),base);
+  assert.equal(noAuth.status,401);
 });
-test('Campaign mutation fails closed when queue claim has won',async()=>{
-  const id='12345678-1234-4234-9234-123456789abc';
-  const env={...base,DB:{prepare(){return{bind(){return{run:async()=>({meta:{changes:0}})}}}}}};
-  const future=new Date(Date.now()+600000).toISOString();
-  const result=await call('/admin/campaigns/'+id,'PUT',{name:'Edited',subject:'Subject',html:'<html><body>Personal update</body></html>',scheduledAt:future},env);
-  assert.equal(result.status,409);assert.equal((await result.json()).code,'CAMPAIGN_NOT_EDITABLE');
-  const deleted=await call('/admin/campaigns/'+id,'DELETE',undefined,env);
-  assert.equal(deleted.status,409);
+
+test('Brevo remove failure cannot be reported as successful',async()=>{
+ await withMockFetch(async(_url,options)=>options.method==='GET'?Response.json({email,listIds:[24]}):Response.json({failure:[email],success:[]},{status:201}),async()=>{
+   const r=await call(item,'DELETE');assert.equal(r.status,502);assert.equal((await r.json()).code,'BREVO_REMOVE_FAILED');
+ });
+});
+
+function fakeDB(initial) {
+ const rows=new Map(initial.map(r=>[r.id,{...r}]));
+ return {rows, prepare(sql){
+   return {bind(...params){return {
+    async first(){
+     if(sql.includes('SELECT attempted FROM daily_send_usage'))return {attempted:0};
+     if(sql.includes('COALESCE(SUM(recipient_estimate)'))return {total:0};
+     return rows.get(params[0])??null;
+    },
+    async run(){
+     if(sql.includes('DELETE FROM campaigns')){
+       const row=rows.get(params[0]);if(!row || row.status!=='queued' || Date.parse(row.scheduled_at)<=Date.parse(params[1]))return {meta:{changes:0}};
+       rows.delete(params[0]);return {meta:{changes:1}};
+     }
+     if(sql.includes('UPDATE campaigns SET name=')){
+       const id=params[8],row=rows.get(id);
+       if(!row || row.status!=='queued' || row.brevo_campaign_id || new Date(row.scheduled_at).getTime()<=Date.parse(params.at(-1)))return {meta:{changes:0}};
+       Object.assign(row,{name:params[0],subject:params[1],html:params[2],preview_text:params[3],scheduled_at:params[4],day_ist:params[5],recipient_estimate:params[6],updated_at:params[7]});
+       return {meta:{changes:1}};
+     }
+     return {meta:{changes:1}};
+    }
+   };
+  }};
+ }};
+}
+const id='12345678-1234-4234-9234-123456789abc';
+const future=()=>new Date(Date.now()+10*60_000).toISOString();
+const payload=()=>({name:'Updated test',subject:'New subject',html:'<html><body>Hello everyone!</body></html>',scheduledAt:future()});
+
+test('queued campaign CRUD uses guarded SQL update and delete',async()=>{
+ const db=fakeDB([{id,status:'queued',scheduled_at:future(),day_ist:'2026-10-15',name:'Old',subject:'Old',html:'<html><body>Old</body></html>',brevo_campaign_id:null}]);
+ const env={...base,DB:db,SENDER_EMAIL:'sender@example.com',SENDER_NAME:'Team'};
+ const read=await call('/admin/campaigns/'+id,'GET',null,env);assert.equal(read.status,200);
+ assert.equal((await read.json()).campaign.name,'Old');
+ const edit=await withMockFetch(async()=>Response.json({count:1,contacts:[]}),()=>call('/admin/campaigns/'+id,'PUT',payload(),env));assert.equal(edit.status,200);
+ assert.equal(db.rows.get(id).name,'Updated test');
+ assert.equal((db.rows.get(id).html.match(/{{ unsubscribe }}/g)||[]).length,1);
+ const del=await call('/admin/campaigns/'+id,'DELETE',undefined,env);assert.equal(del.status,200);
+ assert.equal(db.rows.has(id),false);
+});
+
+test('campaigns after processing or due date are locked against modification',async()=>{
+ for (const [status,scheduled] of [['submitted',future()],['working',future()],['needs_review',future()],['queued',new Date(Date.now()-60000).toISOString()]]) {
+   const db=fakeDB([{id,status,scheduled_at:scheduled,brevo_campaign_id:status==='submitted'?99:null}]);
+   const env={...base,DB:db};
+   const edit=await call('/admin/campaigns/'+id,'PUT',payload(),env);
+   const del=await call('/admin/campaigns/'+id,'DELETE',undefined,env);
+   assert.equal(edit.status,409,status);assert.equal(del.status,409,status);
+   assert.equal(db.rows.has(id),true);
+ }
+});
+
+test('campaign editing with an existing unsubscribe link does not duplicate footer',()=>{
+ const input=payload();
+ const once=normalizeCampaign(input);
+ const again=normalizeCampaign({...input,html:once.html});
+ assert.equal(again.html,once.html);
 });
