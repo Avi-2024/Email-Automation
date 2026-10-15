@@ -162,6 +162,53 @@ function contactProviderError(error) {
   return response({error:'Could not connect to Brevo contacts. Check the Brevo dashboard and Cloudflare Worker logs.',code:'BREVO_CONTACTS_UNAVAILABLE'},502);
 }
 
+
+// Contact CRUD uses the configured Brevo list as its scope.
+// "Delete" removes list membership, NEVER globally deletes the contact.
+function contactItemEmail(path) {
+  const raw = path.slice('/admin/contacts/'.length);
+  if (!raw || raw.includes('/')) return null;
+  let email;
+  try { email = decodeURIComponent(raw).trim().toLowerCase(); }
+  catch { return null; }
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254 ? email : null;
+}
+
+async function handleContactItem(request, env, path) {
+  if (!['PUT','DELETE'].includes(request.method)) return bad('Method not allowed',405);
+  const config = contactConfig(env);
+  if (config.error) return config.error;
+  const email = contactItemEmail(path);
+  if (!email) return bad('Invalid contact email');
+  let attrs;
+  if (request.method === 'PUT') {
+    let data;
+    try { data = await request.json(); }
+    catch { return bad('Invalid JSON body'); }
+    if (!data || typeof data.firstName !== 'string' || typeof data.lastName !== 'string') {
+      return bad('firstName and lastName must be strings');
+    }
+    const firstName = data.firstName.trim(), lastName = data.lastName.trim();
+    if (firstName.length > 100 || lastName.length > 100) return bad('Names must be at most 100 characters');
+    attrs = {FNAME:firstName,LNAME:lastName};
+  }
+  try {
+    const current = await brevo(env,'GET','/contacts/'+encodeURIComponent(email));
+    if (!Array.isArray(current.listIds) || !current.listIds.some(id=>Number(id)===config.listId)) {
+      return response({error:'Contact is not in this mailing list.',code:'CONTACT_NOT_IN_LIST'},404);
+    }
+    if (request.method === 'PUT') {
+      await brevo(env,'PUT','/contacts/'+encodeURIComponent(email),{attributes:attrs});
+      return response({ok:true,email,firstName:attrs.FNAME,lastName:attrs.LNAME});
+    }
+    const removed = await brevo(env,'POST','/contacts/lists/'+config.listId+'/contacts/remove',{emails:[email]});
+    if (Array.isArray(removed.failure) && removed.failure.some(v=>String(v).toLowerCase()===email)) {
+      return response({error:'Brevo could not remove the contact from this list.',code:'BREVO_REMOVE_FAILED'},502);
+    }
+    return response({ok:true,email,removedFromList:config.listId});
+  } catch (error) { return contactProviderError(error); }
+}
+
 async function handleContacts(request, env, path, url) {
   const config = contactConfig(env);
   if (config.error) return config.error;
@@ -226,6 +273,7 @@ async function handleContacts(request, env, path, url) {
 async function handleAdmin(request, env, path, url) {
   if (!auth(request, env)) return bad('Unauthorized',401);
   if (path === '/admin/contacts') return handleContacts(request,env,path,url);
+  if (path.startsWith('/admin/contacts/')) return handleContactItem(request,env,path);
   if (path === '/admin/config' && request.method === 'GET') {
     const contactsConfig = contactConfig(env);
     return response({dryRun:DRY(env), maxDailyRecipients:Number(env.MAX_DAILY_RECIPIENTS || EMAIL_CAP_FREE),
@@ -254,6 +302,42 @@ async function handleAdmin(request, env, path, url) {
     return response({id,status:'queued',dryRun:DRY(env),scheduledAt:payload.scheduledAt},201);
   }
   if (path === '/admin/run' && request.method === 'POST') return response(await runDue(env));
+
+  // Only queued future campaigns can be changed; never modify submitted jobs.
+  const item = path.match(/^\/admin\/campaigns\/([a-f0-9-]{36})$/);
+  if (item) {
+    const id = item[1];
+    if (request.method === 'GET') {
+      const job = await env.DB.prepare(
+        'SELECT id,name,subject,html,scheduled_at,day_ist,status,brevo_campaign_id FROM campaigns WHERE id=?'
+      ).bind(id).first();
+      return job ? response({campaign:job}) : bad('Campaign not found',404);
+    }
+    if (request.method === 'PUT') {
+      let payload;
+      try { payload=normalizeCampaign(await request.json()); }
+      catch(error) { return bad(error.message); }
+      try {
+        const change=await env.DB.prepare(
+          "UPDATE campaigns SET name=?,subject=?,html=?,scheduled_at=?,day_ist=?,updated_at=? WHERE id=? AND status='queued' AND brevo_campaign_id IS NULL AND scheduled_at>?"
+        ).bind(payload.name,payload.subject,payload.html,payload.scheduledAt,payload.dayIst,nowISO(),id,
+          new Date(Date.now()+60000).toISOString()).run();
+        if (change.meta?.changes!==1) return response({error:'Only queued future campaigns can be edited.',code:'CAMPAIGN_NOT_EDITABLE'},409);
+        return response({ok:true,id,status:'queued',scheduledAt:payload.scheduledAt});
+      } catch(error) {
+        if (/UNIQUE/i.test(error.message)) return bad('Another campaign exists on that IST date',409);
+        throw error;
+      }
+    }
+    if (request.method === 'DELETE') {
+      const change=await env.DB.prepare(
+        "DELETE FROM campaigns WHERE id=? AND status='queued' AND brevo_campaign_id IS NULL AND scheduled_at>?"
+      ).bind(id,new Date(Date.now()+60000).toISOString()).run();
+      if (change.meta?.changes!==1) return response({error:'Only queued future campaigns can be deleted.',code:'CAMPAIGN_NOT_EDITABLE'},409);
+      return response({ok:true,id,deleted:true});
+    }
+    return bad('Method not allowed',405);
+  }
   const match = path.match(/^\/admin\/campaigns\/([a-f0-9-]{36})\/brevo$/);
   if (match && request.method === 'GET') {
     const row = await env.DB.prepare('SELECT brevo_campaign_id FROM campaigns WHERE id=?').bind(match[1]).first();
@@ -270,7 +354,7 @@ export default {
     try {
       if (path === '/health' && request.method === 'GET') return response({ok:true,dryRun:DRY(env)});
       if (path.startsWith('/admin/')) return await handleAdmin(request,env,path,new URL(request.url));
-      if (request.method === 'GET' && env.ASSETS && ['/', '/index.html', '/app.css', '/app.js', '/favicon.svg'].includes(path)) {
+      if (request.method === 'GET' && env.ASSETS && ['/', '/index.html', '/app.css', '/app.js', '/favicon.svg', '/crud.js'].includes(path)) {
         const asset = await env.ASSETS.fetch(request);
         const headers = new Headers(asset.headers);
         headers.set('X-Content-Type-Options','nosniff');

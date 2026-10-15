@@ -1,3 +1,4 @@
+import { installCrud, drawCrud } from './crud.js';
 // Mailroom dashboard — statically served by the same Cloudflare Worker as the API.
 // ADMIN_TOKEN stays in memory only. Never hardcode or persist it.
 const $ = (id) => document.getElementById(id);
@@ -31,6 +32,7 @@ function renderCampaigns() {
  $('metric-queued').textContent=counts.queued||0;
  $('metric-submitted').textContent=counts.submitted||0;
  $('side-campaign-count').textContent=state.campaigns.length;
+ drawCrud('campaigns');
 }
 async function refreshCampaigns() { const d = await api('/admin/campaigns'); state.campaigns = Array.isArray(d.campaigns) ? d.campaigns:[]; renderCampaigns(); }
 async function refreshContacts() {
@@ -47,6 +49,7 @@ function renderContacts() {
  $('contact-prev').disabled=state.offset===0; $('contact-next').disabled=state.offset+state.limit>=total;
  $('plan-used').textContent = `${total} / 300 contacts`;
  $('quota-progress').value = Math.min(total,300);
+ drawCrud('contacts');
 }
 async function refreshConfig() {
  const c = await api('/admin/config'); state.config=c;
@@ -113,4 +116,4 @@ function wire() {
  btn.disabled=true;try{const payload={name:$('campaign-name').value.trim(),subject:$('campaign-subject').value.trim(),html,scheduledAt:d.toISOString()};const res=await api('/admin/campaigns',{method:'POST',body:payload});await refreshCampaigns();notify(`Campaign queued (${res.dryRun?'safe mode':'live mode'}).`);view('campaigns');}catch(x){notify(message(x),true);}finally{btn.disabled=false;}});
  $('run-now').addEventListener('click',async()=>{const dry=state.config?.dryRun;if(!dry && !confirm('LIVE MODE: This can send due campaigns to customers. Continue?'))return;const btn=$('run-now');btn.disabled=true;try{const d=await api('/admin/run',{method:'POST'});$('run-output').textContent=JSON.stringify(d,null,2);await refreshCampaigns();notify(d.dryRun?'Dry-run checked: no emails were sent.':'Run complete. Review campaign statuses.');}catch(e){notify(message(e),true);}finally{btn.disabled=false;}});
 }
-defaultTime();$('timezone-note').textContent=`Uses your device timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}. Campaign dates display in IST.`;$('email-html').value=starter;preview();wire();
+defaultTime();$('timezone-note').textContent=`Uses your device timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}. Campaign dates display in IST.`;$('email-html').value=starter;preview();wire();installCrud({state,api,notify,refreshContacts,refreshCampaigns,view,preview,defaultTime});
