@@ -191,3 +191,4 @@ Tests use only Node's built-in test runner. Integration testing with real Cloudf
 - https://developers.cloudflare.com/d1/platform/pricing/
 - https://developers.cloudflare.com/workers/configuration/cron-triggers/
 "# Email-Automation" 
+"# Email-Automation" 
