@@ -45,8 +45,8 @@ function renderContacts() {
  const total=state.contactCount??0; $('contacts-total').textContent = total.toLocaleString('en-IN'); $('metric-contacts').textContent = total.toLocaleString('en-IN');
  $('contacts-pagination').textContent = total ? `Showing ${Math.min(state.offset+1,total)}–${Math.min(state.offset+state.limit,total)} of ${total} contacts` : 'No contacts in this list';
  $('contact-prev').disabled=state.offset===0; $('contact-next').disabled=state.offset+state.limit>=total;
- $('plan-used').textContent = `${Math.min(total,300)} / 300`;
- $('quota-progress').style.width = `${Math.min(100,total/300*100)}%`;
+ $('plan-used').textContent = `${total} / 300 contacts`;
+ $('quota-progress').value = Math.min(total,300);
 }
 async function refreshConfig() {
  const c = await api('/admin/config'); state.config=c;
@@ -54,6 +54,7 @@ async function refreshConfig() {
  $('config-list').textContent = c.listId??'Not configured';
  $('config-sender').textContent = c.senderEmail || 'Not configured';
  $('config-cap').textContent = `${c.maxDailyRecipients || 300} per campaign`;
+  if (!c.contactsReady) notify(`Contact integration needs: ${(c.contactConfigMissing || []).join(', ')}`,true);
  $('mode-badge').textContent = c.dryRun?'SAFE MODE':'LIVE SENDING';
  $('mode-badge').classList.toggle('live',!c.dryRun);
  $('drynotice').innerHTML = c.dryRun?'◈ <strong>Safe mode is on.</strong> Campaigns are queued but never sent while DRY_RUN=true. You’re free to explore and test. <button data-view="settings">View settings →</button>':'◈ <strong>Live sending is on.</strong> Due campaigns can be submitted automatically by Cloudflare Cron. <button data-view="settings">View settings →</button>';
