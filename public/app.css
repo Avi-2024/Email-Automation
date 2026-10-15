@@ -57,3 +57,18 @@
 #prospects .table-wrap{overflow-x:auto}
 #prospects table{min-width:680px}
 #prospect-import-dialog .dialog-content,#prospect-edit-dialog .dialog-content{max-height:85vh;overflow-y:auto}
+
+/* Plain and readable individual cPanel outreach workspace */
+.outreach-dialog {width:min(750px,calc(100vw - 28px));max-height:calc(100vh - 34px)}
+.outreach-content {max-height:calc(100vh - 40px);overflow-y:auto}
+.outreach-content textarea {width:100%;font-family:inherit;line-height:1.65;resize:vertical}
+.outreach-content h3 {font-size:16px;margin:20px 0 12px}
+.outreach-content label:not(.consent-check) {display:block;margin:14px 0 7px}
+.outreach-rule {border:0;border-top:1px solid #dde7e9;margin:25px 0}
+.outreach-history {display:grid;gap:10px;margin:12px 0}
+.outreach-event {border:1px solid #dbe7e6;border-radius:12px;padding:13px;background:#f9fbfb;overflow-wrap:anywhere}
+.outreach-event small {display:block;color:#697b86;margin-top:5px}
+.outreach-event p {font-size:13px;margin:8px 0}
+.outreach-plain {white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.65 Arial,sans-serif;padding:12px;background:#fff;border:1px solid #e4e8ec;border-radius:8px}
+#outreach-send-btn {margin-top:14px}
+#outreach-setup {margin:13px 0}

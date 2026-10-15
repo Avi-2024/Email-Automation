@@ -37,7 +37,7 @@ async function refreshProspects() {
   $('prospect-page-status').textContent=state.prospectCount?`Showing ${state.prospectOffset+1}–${Math.min(state.prospectOffset+25,state.prospectCount)} of ${state.prospectCount}`:'0 matching prospects';
   $('prospect-prev').disabled=state.prospectOffset<=0;
   $('prospect-next').disabled=state.prospectOffset+25>=state.prospectCount;
-  $('prospect-rows').innerHTML=state.prospects.length?state.prospects.map(x=>`<tr><td><div class="cell-main">${esc(x.email)}</div></td><td>${esc(`${x.first_name||''} ${x.last_name||''}`.trim()||'—')}</td><td>${esc(x.company||'—')}</td><td>${badge(x.status)}</td><td><div class="row-actions"><button class="tiny-btn" data-edit-prospect="${esc(x.email)}">Edit</button><button class="tiny-btn danger-link" data-delete-prospect="${esc(x.email)}">Delete</button></div></td></tr>`).join(''):'<tr><td class="empty-td" colspan="5">No matching prospects. Import a CSV or add one.</td></tr>';
+  $('prospect-rows').innerHTML=state.prospects.length?state.prospects.map(x=>`<tr><td><div class="cell-main">${esc(x.email)}</div></td><td>${esc(`${x.first_name||''} ${x.last_name||''}`.trim()||'—')}</td><td>${esc(x.company||'—')}</td><td>${badge(x.status)}</td><td><div class="row-actions"><button class="tiny-btn" data-outreach-prospect="${esc(x.email)}">Email / History</button><button class="tiny-btn" data-edit-prospect="${esc(x.email)}">Edit</button><button class="tiny-btn danger-link" data-delete-prospect="${esc(x.email)}">Delete</button></div></td></tr>`).join(''):'<tr><td class="empty-td" colspan="5">No matching prospects. Import a CSV or add one.</td></tr>';
 }
 function editProspect(data=null){
   state.editingProspect=data?.email||null;
@@ -84,3 +84,5 @@ function wireProspects(){
 
 
 wireProspects();
+
+export { refreshProspects };
