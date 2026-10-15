@@ -81,3 +81,9 @@ CREATE TABLE IF NOT EXISTS outreach_suppressions (
 );
 INSERT OR IGNORE INTO outreach_suppressions(email,reason)
  SELECT email,'do_not_contact' FROM prospects WHERE status='do_not_contact';
+
+-- Atomic lock protects against simultaneous manual send actions from separate browser tabs.
+CREATE TABLE IF NOT EXISTS outreach_recipient_cooldown (
+  email TEXT PRIMARY KEY COLLATE NOCASE,
+  last_attempt_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z'
+);

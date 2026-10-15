@@ -73,6 +73,12 @@ export async function handleOutreach(request,env,path,{send=sendCpanelMail,check
     const date=utcDay();await env.DB.prepare('INSERT OR IGNORE INTO outreach_daily_usage(day_utc,attempts) VALUES (?,0)').bind(date).run();
     const reserved=await env.DB.prepare('UPDATE outreach_daily_usage SET attempts=attempts+1 WHERE day_utc=? AND attempts<15').bind(date).run();
     if(reserved.meta?.changes!==1)return bad('Daily one-to-one safety cap reached (15 attempts UTC). Try another day.',429);
+    // D1 atomic recipient lock: prevents concurrent requests from two tabs double-sending one lead.
+    await env.DB.prepare('INSERT OR IGNORE INTO outreach_recipient_cooldown(email,last_attempt_at) VALUES (?,?)')
+      .bind(email,'1970-01-01T00:00:00.000Z').run();
+    const locked=await env.DB.prepare('UPDATE outreach_recipient_cooldown SET last_attempt_at=? WHERE email=? AND last_attempt_at<=?')
+      .bind(new Date().toISOString(),email,new Date(Date.now()-86400000).toISOString()).run();
+    if(locked.meta?.changes!==1)return bad('A message was already attempted for this recipient within 24 hours',429);
     const id=crypto.randomUUID();
     const host=String(mailConfig(env).sender.split('@')[1]||'royalitservice.com').replace(/[^a-z0-9.-]/g,'');
     const messageId=`<${id}@${host}>`;

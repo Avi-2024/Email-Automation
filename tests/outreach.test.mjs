@@ -10,7 +10,7 @@ const route=(action)=>`/admin/outreach/prospects/${encodeURIComponent(mail)}/${a
 const base={ADMIN_TOKEN:'test-secret',OUTREACH_ENABLED:'true',CPANEL_SMTP_HOST:'mail.royalitservice.com',CPANEL_IMAP_HOST:'mail.royalitservice.com',CPANEL_MAIL_USER:'hello@royalitservice.com',CPANEL_MAIL_PASSWORD:'not-a-real-password'};
 const payload={subject:'A question about your website',text:'Hello,\nI am reaching out from Royal IT Service, royalitservice.com. Are you open to talk?\nIf not, please reply no thanks and I will not contact you.\nRegards, Royal IT Service.',confirmIndividual:true};
 function db(status='new'){
- const prospect={email:mail,status,first_name:'',company:''},messages=[],followups=[],usage={attempts:0};
+ const prospect={email:mail,status,first_name:'',company:''},messages=[],followups=[],usage={attempts:0},lock={at:'1970-01-01T00:00:00.000Z'};
  return {prospect,messages,followups,usage,prepare(sql){return {bind(...a){return {
   async first(){
    if(sql.startsWith('SELECT email,status'))return prospect;
@@ -28,6 +28,8 @@ function db(status='new'){
   async run(){
    if(sql.startsWith('INSERT OR IGNORE INTO outreach_daily_usage'))return {meta:{changes:1}};
    if(sql.startsWith('UPDATE outreach_daily_usage')){if(usage.attempts>=15)return {meta:{changes:0}};usage.attempts++;return {meta:{changes:1}};}
+   if(sql.startsWith('INSERT OR IGNORE INTO outreach_recipient_cooldown'))return {meta:{changes:1}};
+   if(sql.startsWith('UPDATE outreach_recipient_cooldown')){if(lock.at>a[2])return {meta:{changes:0}};lock.at=a[0];return {meta:{changes:1}};}
    if(sql.startsWith('INSERT INTO outreach_messages')){const [id,prospect_email,subject,body,message_id,status,created_at]=a;messages.push({id,prospect_email,subject,body,message_id,status,created_at});return {meta:{changes:1}};}
    if(sql.startsWith("UPDATE outreach_messages SET status='sent'")){messages.find(x=>x.id===a[1]).status='sent';return {meta:{changes:1}};}
    if(sql.startsWith('UPDATE outreach_messages SET status=?,last_error=')){const r=messages.find(x=>x.id===a[2]);r.status=a[0];r.last_error=a[1];return {meta:{changes:1}};}
