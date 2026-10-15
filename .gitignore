@@ -9,3 +9,6 @@ node_modules/
 .DS_Store
 coverage/
 contacts-private*.csv
+
+# Contains potentially sensitive customer/campaign data from remote D1 export
+mailroom-d1-backup.sql
