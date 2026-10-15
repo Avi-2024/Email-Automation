@@ -1,0 +1,21 @@
+name = "zero-cost-bulk-mailer"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+# Always UTC: 03:30 UTC = 09:00 IST. Run every 10 minutes to support
+# independently scheduled campaigns and to recover after delayed triggers.
+[triggers]
+crons = ["*/10 * * * *"]
+
+[vars]
+# Deliberately safe by default: deployment cannot send until changed to "false".
+DRY_RUN = "true"
+MAX_DAILY_RECIPIENTS = "300"
+# Configure by running: npx wrangler secret put BREVO_API_KEY
+# Never store API keys or ADMIN_TOKEN in this file.
+
+
+[[d1_databases]]
+binding = "DB"
+database_name = "email_automation"
+database_id = "e2b34ad7-b0fa-4689-865d-09c61d0cea12"

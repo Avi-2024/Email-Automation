@@ -1,0 +1,19 @@
+{
+  "name": "zero-cost-bulk-mailer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:local": "wrangler d1 execute email_automation --local --file=./schema.sql",
+    "test": "node --test tests/core.test.mjs",
+    "import:contacts": "node scripts/import-contacts.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

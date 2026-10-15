@@ -1,0 +1,6 @@
+{
+  "name": "October customer update",
+  "subject": "A personal update from our team",
+  "scheduledAt": "2026-10-16T09:00:00+05:30",
+  "html": "<html><body><h1>Hello {{ contact.FNAME }}!</h1><p>Thank you for subscribing to our customer updates.</p><p>We have something useful to share this week.</p><p>Regards,<br>Our team</p></body></html>"
+}
