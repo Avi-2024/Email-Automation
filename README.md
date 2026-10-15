@@ -15,6 +15,32 @@ Cloudflare Workers (scheduled execution) + Cloudflare D1 (campaign queue) + Brev
 - Status listing and lookup of Brevo status by campaign ID.
 - Dry run by default; logs no recipient email contents in scheduled execution.
 
+
+## Mailroom admin dashboard (included)
+
+The same Worker now serves a responsive admin dashboard from the `public/` folder; no second hosting service is necessary. It integrates with the existing Brevo and D1 resources rather than storing customer lists or credentials in the browser.
+
+**After deploying:** Open your existing Worker URL **without** `/health`, then paste the `ADMIN_TOKEN` you set with `wrangler secret put`. The token is stored only in memory for the current tab; refreshing signs you out. The dashboard supports an overview, campaign list and filters, HTML email composer with sandboxed preview, time zone-aware scheduling, Brevo-backed contact browsing and permission-verified CSV imports, read-only sending settings, and manual checks. The admin API always checks the Bearer token.
+
+Deploy from your local project directory after backing up your edits:
+
+```powershell
+npm install
+npm test
+node .\node_modules\wrangler\bin\wrangler.js deploy
+```
+
+The checked-in `wrangler.toml` contains the configured D1 database **ID**, which is not an API credential. **Never commit** `.dev.vars`, `.env`, any admin token, Brevo API key, or personal contact CSV file. Your existing Cloudflare Worker secrets remain remotely configured across standard deployments; verify them using `wrangler secret list` before activating live sending.
+
+### Dashboard limitations and safety
+
+- **DRY_RUN=true is the default**; it never sends marketing emails. Review the Brevo test recipient list before turning it off.
+- The dashboard does **not** include a false claim of open, click, or delivered counts: those live in Brevo reporting. Submitted means only that Brevo accepted the API request.
+- CSV imports are limited to 300 rows per import, 10 contacts per API call, and require opt-in consent and a consent source. Existing contacts are deliberately skipped instead of resubscribed. Large imports should be handled in smaller batches.
+- The campaign API intentionally supports one campaign per IST day. It is not a drip campaign and cannot edit or delete queued campaigns through the UI.
+- The page URL and static dashboard resources are public. The customer data and actions require your ADMIN_TOKEN. Do not expose that token to untrusted users or extensions. If you need multi-user roles, audit logs, or passkey sign-in, implement proper identity-based authentication rather than distributing the shared token.
+- For local UI preview, run `npm run dev` with appropriate local D1 bindings, or serve `public/` directly for a static login-screen preview. Live API calls require a deployed Worker and configured secrets.
+
 ## Requirements
 - **Node.js 22+** (Node.js 24 LTS recommended), npm, a free Cloudflare account, and a Brevo account with an approved sender. The current Wrangler CLI will reject Node.js 20.
 - A sending domain you control, with DKIM/DMARC and SPF set according to Brevo's wizard. Domain purchase may cost money if you do not already own one.
@@ -190,5 +216,3 @@ Tests use only Node's built-in test runner. Integration testing with real Cloudf
 - https://help.brevo.com/hc/en-us/articles/209553645-Insert-a-custom-unsubscribe-link-in-your-emails
 - https://developers.cloudflare.com/d1/platform/pricing/
 - https://developers.cloudflare.com/workers/configuration/cron-triggers/
-"# Email-Automation" 
-"# Email-Automation" 

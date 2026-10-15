@@ -119,8 +119,84 @@ async function runDue(env) {
   return {dryRun:false,outcomes};
 }
 
-async function handleAdmin(request, env, path) {
+// Validates only the explicit-consent contact shape used by the dashboard.
+// Existing contacts are never updated or re-subscribed by this importer.
+function validateContact(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Contact must be an object');
+  const email = String(input.email ?? '').trim().toLowerCase();
+  const firstName = String(input.first_name ?? '').trim();
+  const lastName = String(input.last_name ?? '').trim();
+  const consentSource = String(input.consent_source ?? '').trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) throw new Error('Invalid email');
+  if (String(input.consent ?? '').toLowerCase() !== 'yes') throw new Error('Explicit consent required');
+  if (consentSource.length < 3 || consentSource.length > 250) throw new Error('Consent source required (3–250 chars)');
+  if (firstName.length > 100 || lastName.length > 100) throw new Error('Name too long');
+  return {email, firstName, lastName};
+}
+
+async function handleContacts(request, env, path, url) {
+  const { listId } = validateEnv(env);
+  if (path === '/admin/contacts' && request.method === 'GET') {
+    const offset = Number(url.searchParams.get('offset') || 0);
+    const limit = Number(url.searchParams.get('limit') || 25);
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 50) return bad('Invalid pagination');
+    const data = await brevo(env, 'GET', `/contacts/lists/${listId}/contacts?limit=${limit}&offset=${offset}&sort=desc`);
+    const contacts = (data.contacts || []).map(x => ({
+      id:x.id, email:x.email, firstName:x.attributes?.FNAME || x.attributes?.FIRSTNAME || '',
+      lastName:x.attributes?.LNAME || x.attributes?.LASTNAME || '',
+      emailBlacklisted:Boolean(x.emailBlacklisted),
+      unsubscribed:Boolean(x.listUnsubscribed?.includes(listId)),
+      createdAt:x.createdAt || null
+    }));
+    return response({contacts, count:Number(data.count) || 0, offset, limit, listId});
+  }
+  if (path === '/admin/contacts' && request.method === 'POST') {
+    let data;
+    try { data = await request.json(); } catch { return bad('Invalid JSON body'); }
+    if (data?.confirmed !== true || !Array.isArray(data.contacts) || data.contacts.length < 1 || data.contacts.length > 10) {
+      return bad('Confirm consent and import 1–10 contacts per request');
+    }
+    // Reject an entire batch with invalid consent before contacting Brevo.
+    let contacts;
+    try {
+      contacts = data.contacts.map(validateContact);
+      if (new Set(contacts.map(c => c.email)).size !== contacts.length) throw new Error('Duplicate emails in batch');
+    } catch (error) { return bad(error.message); }
+    const results = [];
+    for (const contact of contacts) {
+      const attributes = {};
+      if (contact.firstName) attributes.FNAME = contact.firstName;
+      if (contact.lastName) attributes.LNAME = contact.lastName;
+      try {
+        await brevo(env, 'POST', '/contacts', {
+          email: contact.email, attributes, listIds:[listId], updateEnabled:false
+        });
+        results.push({email:contact.email,status:'created'});
+      } catch (error) {
+        if (error.httpStatus === 400 && /exist|duplicate/i.test(error.message)) {
+          // Do not update, add to list, or change suppression of an existing contact.
+          results.push({email:contact.email,status:'existing_skipped'});
+        } else {
+          results.push({email:contact.email,status:'failed',error:error.message.slice(0,180)});
+          // Account-wide rate limiting or auth problems should not cause more calls.
+          if ([401,403,429].includes(error.httpStatus)) break;
+        }
+      }
+    }
+    return response({results, created:results.filter(x=>x.status==='created').length,
+      skipped:results.filter(x=>x.status==='existing_skipped').length,
+      failed:results.filter(x=>x.status==='failed').length});
+  }
+  return bad('Unknown endpoint',404);
+}
+
+async function handleAdmin(request, env, path, url) {
   if (!auth(request, env)) return bad('Unauthorized',401);
+  if (path === '/admin/contacts') return handleContacts(request,env,path,url);
+  if (path === '/admin/config' && request.method === 'GET') {
+    return response({dryRun:DRY(env), maxDailyRecipients:Number(env.MAX_DAILY_RECIPIENTS || EMAIL_CAP_FREE),
+      listId:Number(env.BREVO_LIST_ID)||null, senderName:env.SENDER_NAME||null,senderEmail:env.SENDER_EMAIL||null});
+  }
   if (path === '/admin/campaigns' && request.method === 'GET') {
     const all = await env.DB.prepare(`SELECT id,name,subject,scheduled_at,day_ist,status,
       brevo_campaign_id,last_error,created_at,updated_at FROM campaigns ORDER BY scheduled_at DESC LIMIT 100`).all();
@@ -157,7 +233,18 @@ export default {
     const path = new URL(request.url).pathname;
     try {
       if (path === '/health' && request.method === 'GET') return response({ok:true,dryRun:DRY(env)});
-      if (path.startsWith('/admin/')) return handleAdmin(request,env,path);
+      if (path.startsWith('/admin/')) return handleAdmin(request,env,path,new URL(request.url));
+      if (request.method === 'GET' && env.ASSETS && ['/', '/index.html', '/app.css', '/app.js', '/favicon.svg'].includes(path)) {
+        const asset = await env.ASSETS.fetch(request);
+        const headers = new Headers(asset.headers);
+        headers.set('X-Content-Type-Options','nosniff');
+        headers.set('Referrer-Policy','no-referrer');
+        if (path === '/' || path === '/index.html') {
+          headers.set('Cache-Control','no-store');
+          headers.set('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+        }
+        return new Response(asset.body,{status:asset.status,headers});
+      }
       return bad('Not found',404);
     } catch (e) {
       console.error('Worker error:',e);

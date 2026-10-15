@@ -14,8 +14,13 @@ MAX_DAILY_RECIPIENTS = "300"
 # Configure by running: npx wrangler secret put BREVO_API_KEY
 # Never store API keys or ADMIN_TOKEN in this file.
 
-
 [[d1_databases]]
 binding = "DB"
 database_name = "email_automation"
 database_id = "e2b34ad7-b0fa-4689-865d-09c61d0cea12"
+
+# Host the admin dashboard on the same Worker domain as the API.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = true
