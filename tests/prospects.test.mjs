@@ -17,6 +17,7 @@ function makeDB(){
           rows.set(email,{email,first_name,last_name,company,status,created_at:'2026-10-15',updated_at:'2026-10-15'});
           return {meta:{changes:1}};
         }
+        if(sql.startsWith('INSERT OR IGNORE INTO outreach_suppressions'))return {meta:{changes:1}};
         if(sql.startsWith('UPDATE prospects')){const [first_name,last_name,company,status,updated_at,email]=args;const r=rows.get(email);if(!r)return {meta:{changes:0}};Object.assign(r,{first_name,last_name,company,status,updated_at});return {meta:{changes:1}};}
         if(sql.startsWith('DELETE FROM prospects'))return {meta:{changes:rows.delete(args[0])?1:0}};
         throw new Error('Unexpected write query: '+sql);

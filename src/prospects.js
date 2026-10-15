@@ -49,6 +49,7 @@ export async function handleProspects(request,env,path,url) {
     let created=0,skipped=0;
     for (const x of rows) {
       const result=await env.DB.prepare('INSERT OR IGNORE INTO prospects (email,first_name,last_name,company,status) VALUES (?,?,?,?,?)').bind(x.email,x.firstName,x.lastName,x.company,x.status).run();
+      if(x.status==='do_not_contact') await env.DB.prepare("INSERT OR IGNORE INTO outreach_suppressions(email,reason) VALUES (?,'do_not_contact')").bind(x.email).run();
       if (result.meta?.changes===1) created++; else skipped++;
     }
     return response({created,skipped,processed:rows.length,storage:'D1_ONLY',marketingListModified:false},bulk?200:201);
@@ -66,6 +67,7 @@ export async function handleProspects(request,env,path,url) {
       let x;
       try{x=validateProspect({...input,email});}catch(error){return bad(error.message);}
       const result=await env.DB.prepare('UPDATE prospects SET first_name=?,last_name=?,company=?,status=?,updated_at=? WHERE email=?').bind(x.firstName,x.lastName,x.company,x.status,nowISO(),email).run();
+      if(x.status==='do_not_contact') await env.DB.prepare("INSERT OR IGNORE INTO outreach_suppressions(email,reason) VALUES (?,'do_not_contact')").bind(email).run();
       return result.meta?.changes===1 ? response({ok:true,email}):bad('Prospect not found',404);
     }
   }

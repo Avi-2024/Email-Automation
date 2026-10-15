@@ -20,37 +20,33 @@ One Cloudflare Worker URL for an authenticated admin dashboard, consent-based su
 
 **Important limitations:** Mailroom's 300-cap is an **internal attempt reservation**, not a real-time measurement of Brevo's account-wide remaining credits. Emails sent outside Mailroom, recipient changes between queueing and sending, and Brevo's own quota reset clock can make provider balances differ. The sender must review provider limits when using any other sending channel. Reports require Brevo tracking to be enabled/available; privacy features and image blockers make opens approximate. Google Analytics conversions, revenue attribution, geographic analytics, inbox placement, and CRM automation are **not** built or inferred. To measure purchases/leads, instrument the destination website and connect its analytics in a separate phase. Consent sources are checked on import, but a dedicated tamper-evident consent audit journal is not yet implemented.
 
-## Critical migration for EXISTING installations (safe maintenance procedure)
+## Critical migration for EXISTING installations (do before deploying this version)
 
-Your existing production D1 `campaigns` table has `day_ist TEXT NOT NULL UNIQUE`. Updating JavaScript alone cannot remove this SQLite constraint. **You must run the one-time migration before enabling live sending in the upgraded Worker.** It reconstructs the table with all existing campaign rows, IDs, statuses, timestamps, Brevo IDs, and HTML preserved. It adds quota tracking and preview fields. Campaigns in older `submitted`, `working`, `prepared`, or `needs_review` states conservatively consume all 300 internal attempt slots **for their scheduled IST day**, because actual historical recipient counts are unknown. Existing queued campaigns do not have an estimate until rescheduled; the runtime still checks the actual list count and enforces the quota.
+Your existing production D1 `campaigns` table has `day_ist TEXT NOT NULL UNIQUE`. Updating JavaScript alone cannot remove this SQLite constraint. **You must run the one-time migration before deployment.** It reconstructs the table with all existing campaign rows, IDs, statuses, timestamps, Brevo IDs, and HTML preserved. It adds quota tracking and preview fields. Campaigns in older `submitted`, `working`, `prepared`, or `needs_review` states conservatively consume all 300 internal attempt slots **for their scheduled IST day**, because actual historical recipient counts are unknown. Existing queued campaigns do not have an estimate until rescheduled; the runtime still checks the actual list count and enforces the quota.
 
 In **PowerShell, inside the GitHub project root**, using the same Cloudflare account as the Worker:
 
 ```powershell
-# 1. Get latest source, run tests
+# 1. Get the latest source and check local tests
 git pull origin main
 npm install
 npm test
 
-# 2. Back up your existing D1 database before changing its schema
-node .\node_modules\wrangler\bin\wrangler.js d1 export email_automation --remote --output=./mailroom-d1-backup.sql
+# 2. Recommended: inspect and back up campaign data before structural migration
+node .\node_modules\wrangler\bin\wrangler.js d1 execute email_automation --remote --command "SELECT id,name,day_ist,status,brevo_campaign_id FROM campaigns ORDER BY scheduled_at DESC LIMIT 100"
 
-# 3. SAFE FIRST: deploy updated Worker with committed DRY_RUN=true.
-# This pauses live sending; contact/campaign endpoints may briefly return errors
-# until step 4's database migration completes.
-node .\node_modules\wrangler\bin\wrangler.js deploy
-
-# 4. RUN ONCE ONLY: remove old one-campaign-per-day constraint and add quota ledger
+# 3. RUN ONCE ONLY: migrate the existing D1 campaigns table
 node .\node_modules\wrangler\bin\wrangler.js d1 execute email_automation --remote --file=./migrations/002_multi_campaign_quota.sql
 
-# 5. Verify campaigns and quotas survived
+# 4. Confirm schema and data
 node .\node_modules\wrangler\bin\wrangler.js d1 execute email_automation --remote --command "SELECT COUNT(*) AS total FROM campaigns"
 node .\node_modules\wrangler\bin\wrangler.js d1 execute email_automation --remote --command "SELECT day_ist,attempted FROM daily_send_usage ORDER BY day_ist DESC LIMIT 5"
 
-# 6. Refresh dashboard, ensure SAFE MODE and test UI/reports before live sending
+# 5. Deploy UI + API to SAME existing Worker URL
+node .\node_modules\wrangler\bin\wrangler.js deploy
 ```
 
-**Do not run the migration twice.** A sentinel (`mailroom_schema_migration_002`) deliberately makes the second attempt fail instead of silently losing new columns. Do not run `schema.sql` over an existing production table to attempt a migration; the correct file is `migrations/002_multi_campaign_quota.sql`. Do not run campaign sends while a D1 migration is being applied. This procedure deploys SAFE MODE first, accepting temporary dashboard errors to avoid an accidental live send during a schema rebuild. If the migration reports an error, **leave the upgraded Worker in SAFE MODE** and inspect/restore the DB before using the dashboard. In case an interrupted SQL operation needs recovery, use Cloudflare D1 Time Travel/restore before retrying and verify restored campaign counts. If you cannot perform the migration safely, stay on the currently deployed version.
+**Do not run the migration twice.** A sentinel (`mailroom_schema_migration_002`) deliberately makes the second attempt fail instead of silently losing new columns. Do not run `schema.sql` over an existing production table to attempt a migration; the correct file is `migrations/002_multi_campaign_quota.sql`. Avoid scheduling or running the campaign cron while a D1 migration is being applied. If migration reports an error, **do not deploy the updated Worker** until the DB state has been inspected. In case an interrupted SQL operation needs recovery, use Cloudflare D1 Time Travel/restore before retrying and verify restored campaign counts. If you cannot perform the migration safely, stay on the currently deployed version.
 
 **Deployment defaults to `DRY_RUN = "true"`** in committed `wrangler.toml`. Your currently deployed Worker may have `LIVE SENDING` enabled through a local edit. Deploying this repository config sets it back to **SAFE MODE**. Keep it safe while verifying reports, contacts and quota. When ready for actual sending, verify that the list contains only intended opted-in recipients, review any past-due queued campaigns, then explicitly switch `DRY_RUN` to `"false"` in your local `wrangler.toml` and redeploy. **Past-due campaigns can send automatically on the next cron run.** Never commit real API keys or admin tokens.
 
@@ -130,10 +126,53 @@ Run `npm test` on Node.js 22+; GitHub Actions also runs tests for every PR and p
 - [Cloudflare D1](https://developers.cloudflare.com/d1/)
 - [Cloudflare cron](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
 
-## D1-only CRM Prospects — new feature
 
-After a remote D1 backup, run `node .\node_modules\wrangler\bin\wrangler.js d1 execute email_automation --remote --file=./migrations/003_prospects_crm.sql` **before** deploying this code with `node .\node_modules\wrangler\bin\wrangler.js deploy`. This migration is additive and idempotent; it creates only a `prospects` table and its index and does not alter campaigns or the Brevo audience. The committed `wrangler.toml` still defaults to `DRY_RUN="true"`. Check for past-due queued campaigns before ever enabling live sending.
+## cPanel one-to-one Prospect Outreach (v3)
 
-The new **Prospects** sidebar page is an independent CRM. Import CSV requires only the `email` column; `first_name`, `last_name`, and `company` are optional. Other columns are ignored. It accepts 1–1,000 rows per CSV file and sends batches of 50 to the authenticated D1-only API; existing emails are skipped. Prospects may be searched, added, edited, assigned `new`, `contacted`, `replied`, `qualified`, `closed`, or `do_not_contact` statuses, and deleted. They are **never added to Brevo, emailed by cron, or counted against campaign limits**. Importing does not infer marketing consent. Honor opt-outs and do not use bounced leads for renewed outreach.
+**Prospects are not Brevo Subscribers.** Direct sending requires an explicit single-recipient action in Prospects → **Email / History**, using the business mailbox in your hosting/cPanel account. There is **no bulk-send to prospects**, CSV automation, multi-recipient send or scheduled auto-follow-up. The original Brevo campaign routes remain unchanged and still require marketing opt-in.
 
-The **Subscribers** page still uses Brevo and keeps its separate evidence-based opt-in import requiring `email,first_name,last_name,consent,consent_source`, plus explicit consent validation. There is intentionally no automated CRM-to-marketing promotion. Prospect endpoints (ADMIN_TOKEN protected): `GET /admin/prospects`, `POST /admin/prospects`, `POST /admin/prospects/import`, `PUT /admin/prospects/{email}`, and `DELETE /admin/prospects/{email}`.
+### Rollout (existing database)
+
+1. `git pull --ff-only origin main && npm install && npm test` (expected **43 tests** at release).
+2. Back up D1: `node .\node_modules\wrangler\bin\wrangler.js d1 export email_automation --remote --output=./mailroom-outreach-backup.sql` (use an absolute or new path if filename exists).
+3. If the previous CRM upgrade has not been migrated, run `migrations/003_prospects_crm.sql` first. Then run `node .\node_modules\wrangler\bin\wrangler.js d1 execute email_automation --remote --file=./migrations/004_outreach_crm.sql`.
+4. Deploy **with `OUTREACH_ENABLED = "false"`** initially using `node .\node_modules\wrangler\bin\wrangler.js deploy`. Keep `DRY_RUN = "true"` for the separate Brevo automation if desired.
+5. Under **cPanel → Email Accounts → Connect Devices**, copy your exact outgoing SMTP server name and incoming IMAP server name (DNS-only if behind Cloudflare), then set secrets in the same Cloudflare Worker:
+
+```powershell
+node .\node_modules\wrangler\bin\wrangler.js secret put CPANEL_SMTP_HOST
+node .\node_modules\wrangler\bin\wrangler.js secret put CPANEL_IMAP_HOST
+node .\node_modules\wrangler\bin\wrangler.js secret put CPANEL_MAIL_USER
+node .\node_modules\wrangler\bin\wrangler.js secret put CPANEL_MAIL_PASSWORD
+```
+
+`CPANEL_MAIL_USER` is the complete mailbox address, e.g. `hello@royalitservice.com` **only if that mailbox actually exists**. Enter a generated email-account password (prefer an app-specific password if supported); never put secrets in GitHub, CSV, HTML, or chat. **SMTP is implicit TLS on 465, IMAP is implicit TLS on 993.** Workers use outbound TCP TLS sockets; **port 25 is blocked**. If cPanel restricts remote IP logins or requires extra SMTP auth, contact the host or use a permitted HTTPS mail API bridge. Do not change the domain's MX records merely for reply tracking.
+
+6. Test mailbox SPF, DKIM and DMARC, and check **cPanel → Track Delivery**. SMTP acceptance is **not** inbox delivery. Bare SMTP submission does not necessarily save a copy to the mailbox's Sent folder; Mailroom stores a secure per-prospect outbound history.
+7. After verifying one manually reviewed recipient, explicitly switch `OUTREACH_ENABLED = "true"` in `wrangler.toml` and deploy again. This flag is **separate from `DRY_RUN`**: a deliberate individual send can occur even when marketing automation is in SAFE MODE. The UI states this before sending.
+
+### What is implemented
+
+- Manual plain-text message composer for **one** selected prospect (Royal IT Service identity, reply address and clear opt-out statement), explicit checkbox **and** browser confirmation.
+- Server-side suppression (`do_not_contact` or `closed`), persistent do-not-contact registry that survives deleting/re-importing the lead, 15 SMTP attempt/day hard cap (UTC), one attempt/recipient per 24 hours (D1 atomic per-recipient lock, including concurrent browser tabs). Failed or uncertain attempts never silently retry. An email leaving SMTP may still bounce or be filtered; Mailroom does not promise inbox delivery.
+- Authenticated cPanel SMTP (465, TLS), directly from the Worker to the mailbox host. Credentials only in Worker secrets; no arbitrary SMTP host or recipient can be passed from the browser.
+- Individual email history (subject, plain-text body, status, creation and submission time, SMTP Message-ID), with `needs_review` if result may have been accepted remotely. History is stored privately in Cloudflare D1.
+- Optional, user-triggered IMAP reply check (993 TLS). Searches **INBOX** only for `From: prospect` and `In-Reply-To` / `References` containing Mailroom-generated outbound Message-IDs, so only matching conversations are counted as confirmed replies. Replies without those headers, those in folders other than INBOX, or inaccessible via IMAP may require manual status update. No mailbox credentials exposed to the browser.
+- Follow-up reminders tracked in D1, with manual Done action. **No automatic email follow-up**.
+- `OUTREACH_ENABLED` defaults false. No live e-mail was sent during development or testing.
+
+### HTTP API (Bearer ADMIN_TOKEN)
+
+| Method | Route | Operation |
+| --- | --- | --- |
+| GET | `/admin/outreach/config` | Safe mailbox setup status (never exposes passwords) |
+| POST | `/admin/outreach/prospects/{email}/send` | Single explicitly confirmed plain-text SMTP submission |
+| GET | `/admin/outreach/prospects/{email}/history` | Outbound history + follow-up tasks |
+| POST | `/admin/outreach/prospects/{email}/check-replies` | On-demand IMAP inbox/thread check |
+| POST | `/admin/outreach/prospects/{email}/followups` | Schedule a manual reminder (no email) |
+| GET | `/admin/outreach/followups` | Upcoming manual reminders |
+| POST | `/admin/outreach/followups/{id}/complete` | Mark reminder done |
+
+### Limitations and compliance
+
+One-to-one technical sending does not automatically make commercial emails compliant. Only contact appropriately sourced business leads where outreach is permitted under applicable laws/provider terms, tailor every message, honor objections, and never revive bounced/opted-out contacts. An unverified public email is not a marketing subscriber. This is **not** an automatic cold-email blasting tool or a guarantee of inbox placement. IMAP and SMTP live connectivity require the cPanel credentials/host to be set and a real mailbox smoke-test by its owner; unit tests use mock sockets and do not perform any sends.
