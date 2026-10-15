@@ -2,7 +2,7 @@
 // ADMIN_TOKEN stays in memory only. Never hardcode or persist it.
 const $ = (id) => document.getElementById(id);
 const all = (selector) => [...document.querySelectorAll(selector)];
-const state = { token: '', campaigns: [], contacts: [], contactCount: null, offset: 0, limit: 25, config: null, view: 'overview', reports: null, activeReport: null, quota: null, busy: false, editingCampaignId: null, editingContactEmail: null };
+const state = { token: '', prospects: [], prospectCount: 0, prospectOffset: 0, editingProspect: null, campaigns: [], contacts: [], contactCount: null, offset: 0, limit: 25, config: null, view: 'overview', reports: null, activeReport: null, quota: null, busy: false, editingCampaignId: null, editingContactEmail: null };
 const starter = `<html>\n  <body style="margin:0;padding:32px;background:#f7f8fb;font-family:Arial,sans-serif;color:#203044">\n    <table role="presentation" style="max-width:580px;width:100%;margin:auto;background:#fff;border-radius:12px" cellspacing="0" cellpadding="0"><tr><td style="padding:44px">\n      <p style="font-size:12px;font-weight:700;letter-spacing:2px;color:#0e8976">NEXILO LABS</p>\n      <h1 style="font-size:30px;letter-spacing:-1px">Hello {{ contact.FNAME }}!</h1>\n      <p style="font-size:16px;line-height:1.8">Thanks for joining us. We're glad you're here.</p>\n      <p style="font-size:16px;line-height:1.8">Stay tuned for helpful resources and updates from our team.</p>\n      <p style="margin-top:30px">Best regards,<br><strong>The Nexilo Labs team</strong></p>\n    </td></tr></table>\n  </body>\n</html>`;
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const message = (err) => err instanceof Error ? err.message : String(err);
@@ -75,7 +75,7 @@ function view(name) {
  state.view=name;
  all('.view').forEach(x=>x.classList.toggle('active',x.id===name));
  all('.nav-link').forEach(x=>x.classList.toggle('active',x.dataset.view===name));
- $('crumb').innerHTML = `Workspace <span class="crumb-separator">/</span> ${esc(({overview:'Overview',campaigns:'Campaigns',analytics:'Analytics',contacts:'Contacts',compose:'Email editor',settings:'Settings'})[name])}`;
+ $('crumb').innerHTML = `Workspace <span class="crumb-separator">/</span> ${esc(({overview:'Overview',campaigns:'Campaigns',analytics:'Analytics',contacts:'Subscribers',prospects:'Prospects',compose:'Email editor',settings:'Settings'})[name])}`;
  $('sidebar').classList.remove('open');
  window.scrollTo({top:0,behavior:'smooth'});
 }
@@ -310,3 +310,5 @@ function wire() {
  $('run-now').addEventListener('click' ,async()=>{const dry=state.config?.dryRun;if(!dry && !confirm('LIVE MODE: This can send due campaigns to customers. Continue?'))return;const btn=$('run-now');btn.disabled=true;try{const d=await api('/admin/run',{method:'POST'});$('run-output').textContent=JSON.stringify(d,null,2);await refreshCampaigns();notify(d.dryRun?'Dry-run checked: no emails were sent.':'Run complete. Review campaign statuses.');}catch(e){notify(message(e),true);}finally{btn.disabled=false;}});
 }
 defaultTime();$('timezone-note').textContent=`Uses your device timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}. Campaign dates display in IST.`;$('email-html').value=starter;preview();wire();
+
+export {state,api,notify,esc,badge,$};

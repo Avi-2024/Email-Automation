@@ -1,3 +1,4 @@
+import { handleProspects } from './prospects.js';
 import { normalizeCampaign, EMAIL_CAP_FREE } from './helpers.js';
 
 const API = 'https://api.brevo.com/v3';
@@ -346,6 +347,7 @@ async function handleContacts(request, env, path, url) {
 
 async function handleAdmin(request, env, path, url) {
   if (!auth(request, env)) return bad('Unauthorized',401);
+  if (path === '/admin/prospects' || path.startsWith('/admin/prospects/')) return handleProspects(request,env,path,url);
   if (path === '/admin/contacts') return handleContacts(request,env,path,url);
   if (path.startsWith('/admin/contacts/') && path.endsWith('/activity') && request.method==='GET') {
     const email=parseContactEmail(path.slice(0,-'/activity'.length));
@@ -519,7 +521,7 @@ export default {
     try {
       if (path === '/health' && request.method === 'GET') return response({ok:true,dryRun:DRY(env)});
       if (path.startsWith('/admin/')) return await handleAdmin(request,env,path,new URL(request.url));
-      if (request.method === 'GET' && env.ASSETS && ['/', '/index.html', '/app.css', '/app.js', '/favicon.svg'].includes(path)) {
+      if (request.method === 'GET' && env.ASSETS && ['/', '/index.html', '/app.css', '/app.js', '/prospects.js', '/favicon.svg'].includes(path)) {
         const asset = await env.ASSETS.fetch(request);
         const headers = new Headers(asset.headers);
         headers.set('X-Content-Type-Options','nosniff');
