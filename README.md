@@ -231,3 +231,8 @@ Contacts need only `BREVO_API_KEY` and numeric `BREVO_LIST_ID`. An authenticated
 | `BREVO_CONTACTS_UNAVAILABLE` (502) | Provider/network failure | Check Brevo/Worker logs |
 
 A sandboxed email preview permits inline CSS but not executable inline scripts. The contacts indicator uses native `<progress>`. Keep `DRY_RUN=true` during testing.
+
+
+## Contact and campaign CRUD
+
+The Mailroom Contacts page can add a consented contact, edit its first/last name, or remove it **from the configured Brevo list only**. Contact removal does not globally delete addresses or bypass provider suppression. Existing opted-out contacts are not automatically re-subscribed. The Campaigns page can edit/delete a campaign only while it is queued and scheduled more than one minute ahead. Submitted/working campaigns cannot be modified through these endpoints. ADMIN_TOKEN is required for all CRUD routes. DRY_RUN remains true by default.
