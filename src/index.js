@@ -134,13 +134,46 @@ function validateContact(input) {
   return {email, firstName, lastName};
 }
 
+// Contacts only need the API key and list ID, not D1 or campaign sender credentials.
+function contactConfig(env) {
+  const missing = [];
+  if (!env.BREVO_API_KEY) missing.push('BREVO_API_KEY');
+  const listId = Number(env.BREVO_LIST_ID);
+  if (!Number.isSafeInteger(listId) || listId <= 0) missing.push('BREVO_LIST_ID');
+  if (missing.length) return { error: response({
+    error: `Contact integration is not configured: ${missing.join(', ')}. Set these as Wrangler secrets, then retry.`,
+    code: 'CONTACT_CONFIG_MISSING', missing
+  }, 503) };
+  return { listId };
+}
+
+function contactProviderError(error) {
+  // Keep provider error bodies, API keys and internal exception details server-side.
+  if (error.httpStatus === 401 || error.httpStatus === 403) {
+    return response({error:'Brevo refused contact access. Check BREVO_API_KEY and its API permissions.',code:'BREVO_AUTH_FAILED'},502);
+  }
+  if (error.httpStatus === 404) {
+    return response({error:'The configured Brevo contact list could not be found. Check BREVO_LIST_ID.',code:'BREVO_LIST_NOT_FOUND'},502);
+  }
+  if (error.httpStatus === 429) {
+    return response({error:'Brevo rate limit reached. Wait and try again.',code:'BREVO_RATE_LIMIT'},503);
+  }
+  console.error('Brevo contact request failed:',error.httpStatus ?? 'network/unexpected');
+  return response({error:'Could not connect to Brevo contacts. Check the Brevo dashboard and Cloudflare Worker logs.',code:'BREVO_CONTACTS_UNAVAILABLE'},502);
+}
+
 async function handleContacts(request, env, path, url) {
-  const { listId } = validateEnv(env);
+  const config = contactConfig(env);
+  if (config.error) return config.error;
+  const { listId } = config;
   if (path === '/admin/contacts' && request.method === 'GET') {
     const offset = Number(url.searchParams.get('offset') || 0);
     const limit = Number(url.searchParams.get('limit') || 25);
     if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 50) return bad('Invalid pagination');
-    const data = await brevo(env, 'GET', `/contacts/lists/${listId}/contacts?limit=${limit}&offset=${offset}&sort=desc`);
+    let data;
+    try {
+      data = await brevo(env, 'GET', `/contacts/lists/${listId}/contacts?limit=${limit}&offset=${offset}&sort=desc`);
+    } catch (error) { return contactProviderError(error); }
     const contacts = (data.contacts || []).map(x => ({
       id:x.id, email:x.email, firstName:x.attributes?.FNAME || x.attributes?.FIRSTNAME || '',
       lastName:x.attributes?.LNAME || x.attributes?.LASTNAME || '',
@@ -194,8 +227,11 @@ async function handleAdmin(request, env, path, url) {
   if (!auth(request, env)) return bad('Unauthorized',401);
   if (path === '/admin/contacts') return handleContacts(request,env,path,url);
   if (path === '/admin/config' && request.method === 'GET') {
+    const contactsConfig = contactConfig(env);
     return response({dryRun:DRY(env), maxDailyRecipients:Number(env.MAX_DAILY_RECIPIENTS || EMAIL_CAP_FREE),
-      listId:Number(env.BREVO_LIST_ID)||null, senderName:env.SENDER_NAME||null,senderEmail:env.SENDER_EMAIL||null});
+      listId:Number(env.BREVO_LIST_ID)||null, senderName:env.SENDER_NAME||null,senderEmail:env.SENDER_EMAIL||null,
+      contactsReady:!contactsConfig.error, contactConfigMissing:contactsConfig.error ?
+        [!env.BREVO_API_KEY && 'BREVO_API_KEY', !(Number.isSafeInteger(Number(env.BREVO_LIST_ID)) && Number(env.BREVO_LIST_ID) > 0) && 'BREVO_LIST_ID'].filter(Boolean) : []});
   }
   if (path === '/admin/campaigns' && request.method === 'GET') {
     const all = await env.DB.prepare(`SELECT id,name,subject,scheduled_at,day_ist,status,
@@ -233,7 +269,7 @@ export default {
     const path = new URL(request.url).pathname;
     try {
       if (path === '/health' && request.method === 'GET') return response({ok:true,dryRun:DRY(env)});
-      if (path.startsWith('/admin/')) return handleAdmin(request,env,path,new URL(request.url));
+      if (path.startsWith('/admin/')) return await handleAdmin(request,env,path,new URL(request.url));
       if (request.method === 'GET' && env.ASSETS && ['/', '/index.html', '/app.css', '/app.js', '/favicon.svg'].includes(path)) {
         const asset = await env.ASSETS.fetch(request);
         const headers = new Headers(asset.headers);
@@ -241,7 +277,7 @@ export default {
         headers.set('Referrer-Policy','no-referrer');
         if (path === '/' || path === '/index.html') {
           headers.set('Cache-Control','no-store');
-          headers.set('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+          headers.set('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
         }
         return new Response(asset.body,{status:asset.status,headers});
       }

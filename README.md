@@ -216,3 +216,18 @@ Tests use only Node's built-in test runner. Integration testing with real Cloudf
 - https://help.brevo.com/hc/en-us/articles/209553645-Insert-a-custom-unsubscribe-link-in-your-emails
 - https://developers.cloudflare.com/d1/platform/pricing/
 - https://developers.cloudflare.com/workers/configuration/cron-triggers/
+
+
+## Troubleshooting contact page (Brevo)
+
+Contacts need only `BREVO_API_KEY` and numeric `BREVO_LIST_ID`. An authenticated `GET /admin/config` shows `contactsReady` and `contactConfigMissing` without exposing key values.
+
+| API code | Cause | Action |
+| --- | --- | --- |
+| `CONTACT_CONFIG_MISSING` (503) | Key or list ID absent | Configure named Wrangler secrets |
+| `BREVO_AUTH_FAILED` (502) | Brevo 401/403 | Verify API key and permissions |
+| `BREVO_LIST_NOT_FOUND` (502) | Brevo 404 | Verify list ID |
+| `BREVO_RATE_LIMIT` (503) | Brevo 429 | Retry later |
+| `BREVO_CONTACTS_UNAVAILABLE` (502) | Provider/network failure | Check Brevo/Worker logs |
+
+A sandboxed email preview permits inline CSS but not executable inline scripts. The contacts indicator uses native `<progress>`. Keep `DRY_RUN=true` during testing.

@@ -27,7 +27,7 @@
         <button data-view="compose" class="nav-link"><span class="nav-icon">✎</span> Email editor</button>
         <button data-view="settings" class="nav-link"><span class="nav-icon">⚙</span> Settings</button>
       </nav>
-      <div class="side-bottom"><div class="plan-box"><div class="plan-head"><span>✦ Free sending plan</span><strong id="plan-used">0 / 300</strong></div><div class="progress-track"><span id="quota-progress"></span></div><p>Maximum 300 recipients per campaign. Quotas reset according to your provider.</p></div><div class="profile"><div class="profile-avatar">A</div><span><strong>Administrator</strong><small>Session-only login</small></span><button id="signout" title="Disconnect" aria-label="Disconnect">↗</button></div></div>
+      <div class="side-bottom"><div class="plan-box"><div class="plan-head"><span>✦ Contact list size</span><strong id="plan-used">0 / 300</strong></div><progress class="progress-track" id="quota-progress" max="300" value="0" aria-label="Contacts in Brevo list relative to 300-recipient campaign limit"></progress><p>At most 300 recipients per campaign on the free plan. This is your list size, not a live sending quota.</p></div><div class="profile"><div class="profile-avatar">A</div><span><strong>Administrator</strong><small>Session-only login</small></span><button id="signout" title="Disconnect" aria-label="Disconnect">↗</button></div></div>
     </aside>
 
     <div class="app-main">
