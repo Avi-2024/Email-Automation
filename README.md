@@ -129,3 +129,11 @@ Run `npm test` on Node.js 22+; GitHub Actions also runs tests for every PR and p
 - [Brevo create campaign](https://developers.brevo.com/reference/create-email-campaign)
 - [Cloudflare D1](https://developers.cloudflare.com/d1/)
 - [Cloudflare cron](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
+
+## D1-only CRM Prospects — new feature
+
+After a remote D1 backup, run `node .\node_modules\wrangler\bin\wrangler.js d1 execute email_automation --remote --file=./migrations/003_prospects_crm.sql` **before** deploying this code with `node .\node_modules\wrangler\bin\wrangler.js deploy`. This migration is additive and idempotent; it creates only a `prospects` table and its index and does not alter campaigns or the Brevo audience. The committed `wrangler.toml` still defaults to `DRY_RUN="true"`. Check for past-due queued campaigns before ever enabling live sending.
+
+The new **Prospects** sidebar page is an independent CRM. Import CSV requires only the `email` column; `first_name`, `last_name`, and `company` are optional. Other columns are ignored. It accepts 1–1,000 rows per CSV file and sends batches of 50 to the authenticated D1-only API; existing emails are skipped. Prospects may be searched, added, edited, assigned `new`, `contacted`, `replied`, `qualified`, `closed`, or `do_not_contact` statuses, and deleted. They are **never added to Brevo, emailed by cron, or counted against campaign limits**. Importing does not infer marketing consent. Honor opt-outs and do not use bounced leads for renewed outreach.
+
+The **Subscribers** page still uses Brevo and keeps its separate evidence-based opt-in import requiring `email,first_name,last_name,consent,consent_source`, plus explicit consent validation. There is intentionally no automated CRM-to-marketing promotion. Prospect endpoints (ADMIN_TOKEN protected): `GET /admin/prospects`, `POST /admin/prospects`, `POST /admin/prospects/import`, `PUT /admin/prospects/{email}`, and `DELETE /admin/prospects/{email}`.

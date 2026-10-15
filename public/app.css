@@ -50,3 +50,10 @@
 @media(max-width:540px){.report-detail-grid{grid-template-columns:1fr}.analytics-picker .primary-btn{width:100%}}
 
 .utm-card{padding:22px}.utm-card h3{font-size:17px;margin:0 0 8px}.utm-card p{font-size:13px;color:#64777c;line-height:1.6}.utm-card label{display:block;font-size:12px;font-weight:650;margin:15px 0 8px}.utm-card input{width:100%;max-width:100%;padding:12px;border:1px solid #d8e6e0;border-radius:9px;margin-bottom:12px}.utm-card .outline-btn{width:100%}
+
+/* CRM prospects: independent, permission-aware workspace. */
+#prospects .prospect-notice{margin-bottom:22px}
+#prospects .list-toolbar{flex-wrap:wrap}
+#prospects .table-wrap{overflow-x:auto}
+#prospects table{min-width:680px}
+#prospect-import-dialog .dialog-content,#prospect-edit-dialog .dialog-content{max-height:85vh;overflow-y:auto}
