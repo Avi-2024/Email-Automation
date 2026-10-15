@@ -20,33 +20,37 @@ One Cloudflare Worker URL for an authenticated admin dashboard, consent-based su
 
 **Important limitations:** Mailroom's 300-cap is an **internal attempt reservation**, not a real-time measurement of Brevo's account-wide remaining credits. Emails sent outside Mailroom, recipient changes between queueing and sending, and Brevo's own quota reset clock can make provider balances differ. The sender must review provider limits when using any other sending channel. Reports require Brevo tracking to be enabled/available; privacy features and image blockers make opens approximate. Google Analytics conversions, revenue attribution, geographic analytics, inbox placement, and CRM automation are **not** built or inferred. To measure purchases/leads, instrument the destination website and connect its analytics in a separate phase. Consent sources are checked on import, but a dedicated tamper-evident consent audit journal is not yet implemented.
 
-## Critical migration for EXISTING installations (do before deploying this version)
+## Critical migration for EXISTING installations (safe maintenance procedure)
 
-Your existing production D1 `campaigns` table has `day_ist TEXT NOT NULL UNIQUE`. Updating JavaScript alone cannot remove this SQLite constraint. **You must run the one-time migration before deployment.** It reconstructs the table with all existing campaign rows, IDs, statuses, timestamps, Brevo IDs, and HTML preserved. It adds quota tracking and preview fields. Campaigns in older `submitted`, `working`, `prepared`, or `needs_review` states conservatively consume all 300 internal attempt slots **for their scheduled IST day**, because actual historical recipient counts are unknown. Existing queued campaigns do not have an estimate until rescheduled; the runtime still checks the actual list count and enforces the quota.
+Your existing production D1 `campaigns` table has `day_ist TEXT NOT NULL UNIQUE`. Updating JavaScript alone cannot remove this SQLite constraint. **You must run the one-time migration before enabling live sending in the upgraded Worker.** It reconstructs the table with all existing campaign rows, IDs, statuses, timestamps, Brevo IDs, and HTML preserved. It adds quota tracking and preview fields. Campaigns in older `submitted`, `working`, `prepared`, or `needs_review` states conservatively consume all 300 internal attempt slots **for their scheduled IST day**, because actual historical recipient counts are unknown. Existing queued campaigns do not have an estimate until rescheduled; the runtime still checks the actual list count and enforces the quota.
 
 In **PowerShell, inside the GitHub project root**, using the same Cloudflare account as the Worker:
 
 ```powershell
-# 1. Get the latest source and check local tests
+# 1. Get latest source, run tests
 git pull origin main
 npm install
 npm test
 
-# 2. Recommended: inspect and back up campaign data before structural migration
-node .\node_modules\wrangler\bin\wrangler.js d1 execute email_automation --remote --command "SELECT id,name,day_ist,status,brevo_campaign_id FROM campaigns ORDER BY scheduled_at DESC LIMIT 100"
+# 2. Back up your existing D1 database before changing its schema
+node .\node_modules\wrangler\bin\wrangler.js d1 export email_automation --remote --output=./mailroom-d1-backup.sql
 
-# 3. RUN ONCE ONLY: migrate the existing D1 campaigns table
+# 3. SAFE FIRST: deploy updated Worker with committed DRY_RUN=true.
+# This pauses live sending; contact/campaign endpoints may briefly return errors
+# until step 4's database migration completes.
+node .\node_modules\wrangler\bin\wrangler.js deploy
+
+# 4. RUN ONCE ONLY: remove old one-campaign-per-day constraint and add quota ledger
 node .\node_modules\wrangler\bin\wrangler.js d1 execute email_automation --remote --file=./migrations/002_multi_campaign_quota.sql
 
-# 4. Confirm schema and data
+# 5. Verify campaigns and quotas survived
 node .\node_modules\wrangler\bin\wrangler.js d1 execute email_automation --remote --command "SELECT COUNT(*) AS total FROM campaigns"
 node .\node_modules\wrangler\bin\wrangler.js d1 execute email_automation --remote --command "SELECT day_ist,attempted FROM daily_send_usage ORDER BY day_ist DESC LIMIT 5"
 
-# 5. Deploy UI + API to SAME existing Worker URL
-node .\node_modules\wrangler\bin\wrangler.js deploy
+# 6. Refresh dashboard, ensure SAFE MODE and test UI/reports before live sending
 ```
 
-**Do not run the migration twice.** A sentinel (`mailroom_schema_migration_002`) deliberately makes the second attempt fail instead of silently losing new columns. Do not run `schema.sql` over an existing production table to attempt a migration; the correct file is `migrations/002_multi_campaign_quota.sql`. Avoid scheduling or running the campaign cron while a D1 migration is being applied. If migration reports an error, **do not deploy the updated Worker** until the DB state has been inspected. In case an interrupted SQL operation needs recovery, use Cloudflare D1 Time Travel/restore before retrying and verify restored campaign counts. If you cannot perform the migration safely, stay on the currently deployed version.
+**Do not run the migration twice.** A sentinel (`mailroom_schema_migration_002`) deliberately makes the second attempt fail instead of silently losing new columns. Do not run `schema.sql` over an existing production table to attempt a migration; the correct file is `migrations/002_multi_campaign_quota.sql`. Do not run campaign sends while a D1 migration is being applied. This procedure deploys SAFE MODE first, accepting temporary dashboard errors to avoid an accidental live send during a schema rebuild. If the migration reports an error, **leave the upgraded Worker in SAFE MODE** and inspect/restore the DB before using the dashboard. In case an interrupted SQL operation needs recovery, use Cloudflare D1 Time Travel/restore before retrying and verify restored campaign counts. If you cannot perform the migration safely, stay on the currently deployed version.
 
 **Deployment defaults to `DRY_RUN = "true"`** in committed `wrangler.toml`. Your currently deployed Worker may have `LIVE SENDING` enabled through a local edit. Deploying this repository config sets it back to **SAFE MODE**. Keep it safe while verifying reports, contacts and quota. When ready for actual sending, verify that the list contains only intended opted-in recipients, review any past-due queued campaigns, then explicitly switch `DRY_RUN` to `"false"` in your local `wrangler.toml` and redeploy. **Past-due campaigns can send automatically on the next cron run.** Never commit real API keys or admin tokens.
 
